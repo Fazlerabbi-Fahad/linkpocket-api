@@ -1,0 +1,59 @@
+# API release pipeline (SRS 10.1): after CI passes on main, deploy to staging and smoke-test it;
+# production waits for a reviewer to approve the `production` environment (step 4), then a
+# 30-minute health watch runs (step 5). Re-deploying an older commit through
+# workflow_dispatch is the rollback path (docs/runbooks/rollback.md).
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA to deploy (defaults to the head of main)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One release at a time; a newer one waits rather than cancelling one in progress.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Choose the commit
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.event.workflow_run.head_sha || 'main' }}
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  staging:
+    needs: resolve
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: staging
+      ref: ${{ needs.resolve.outputs.sha }}
+    secrets: inherit
+
+  production:
+    needs: [resolve, staging]
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: production
+      ref: ${{ needs.resolve.outputs.sha }}
+      watch_minutes: 30
+    secrets: inherit

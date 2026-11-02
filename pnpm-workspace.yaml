@@ -1,0 +1,11 @@
+# Single-project settings (no workspace packages).
+# Dependency build scripts are denied unless listed here (supply-chain hardening).
+# esbuild verifies its platform binary; mongodb-memory-server downloads mongod lazily
+# on first test run. @sentry/cli gets its binary from a per-platform optional dependency.
+allowBuilds:
+  '@sentry/cli': false
+  esbuild: true
+  mongodb-memory-server: false
+
+minimumReleaseAgeExclude:
+  - resend@6.37.0

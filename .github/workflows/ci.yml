@@ -1,0 +1,93 @@
+# CI for the API (SRS 10.1 step 2): format, lint, typecheck, unit and integration tests with
+# coverage, build, and dependency checks (NFR-M2, NFR-S12, AC-21, AC-23). A green run on main
+# starts deploy.yml (staging, then production behind an approval). Load tests (k6) run on
+# demand: load-test.yml. The web project's CI checks out this repository for its E2E tests.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache MongoDB test binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
+      - name: Lint (ESLint)
+        run: pnpm lint
+
+      - name: Typecheck (TypeScript strict)
+        run: pnpm typecheck
+
+      - name: Unit and integration tests with coverage
+        run: pnpm test:coverage
+
+      - name: Build
+        run: pnpm build
+
+      # Vitest resolves CommonJS packages more leniently than Node, so load the compiled API.
+      - name: Load compiled API modules
+        run: pnpm smoke:dist
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # NFR-S12 / AC-23: high or critical findings fail the build.
+      - name: pnpm audit
+        run: pnpm audit --audit-level high
+
+  dependency-review:
+    # NFR-S12 software composition analysis (OQ-16): GitHub's advisory database checks every
+    # dependency a pull request adds or changes, including licences and transitive packages.
+    name: Dependency review (SCA)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

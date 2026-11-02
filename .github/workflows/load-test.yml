@@ -1,0 +1,42 @@
+# NFR-P5, NFR-P6, AC-19: run before each major release against staging, never production.
+# Needs the seeded accounts and RATE_LIMIT_MULTIPLIER on the staging API for the duration
+# (docs/runbooks/load-testing.md). Fails when a k6 threshold is missed.
+name: Load test (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: Concurrent users
+        default: '200'
+        type: string
+      hold:
+        description: How long to hold full load (k6 duration)
+        default: 5m
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    name: k6 against staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - name: Run k6
+        run: k6 run load/k6/resources.js
+        env:
+          BASE_URL: ${{ vars.WEB_URL }}
+          LOAD_TEST_PASSWORD: ${{ secrets.LOAD_TEST_PASSWORD }}
+          LOAD_USERS: ${{ inputs.users }}
+          HOLD: ${{ inputs.hold }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-summary
+          path: load-summary.json
+          retention-days: 90

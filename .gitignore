@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment files: only the .env.example placeholders are committed.
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Test artifacts
+load-summary.json

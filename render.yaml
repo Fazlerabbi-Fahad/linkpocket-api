@@ -1,0 +1,101 @@
+# Render Blueprint for the API and its scheduled job (SRS 7, ADR-0002). Values marked
+# `sync: false` are entered in the Render dashboard (secret manager, NFR-S13), never here.
+# autoDeploy is off: only the gated GitHub workflow (deploy.yml) deploys a commit.
+# Setup and checks: docs/runbooks/deployment.md.
+envVarGroups:
+  - name: linkpocket-staging
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: staging
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_AUTH_TOKEN
+        sync: false
+      - key: SENTRY_ORG
+        sync: false
+      - key: SENTRY_PROJECT
+        value: linkpocket-api
+  - name: linkpocket-production
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_AUTH_TOKEN
+        sync: false
+      - key: SENTRY_ORG
+        sync: false
+      - key: SENTRY_PROJECT
+        value: linkpocket-api
+
+services:
+  - &api
+    type: web
+    name: linkpocket-api-staging
+    runtime: node
+    plan: starter
+    autoDeploy: false
+    # Dev dependencies are needed to compile; NODE_ENV=production would otherwise skip them.
+    buildCommand: >-
+      corepack enable && pnpm install --frozen-lockfile --prod=false &&
+      pnpm build &&
+      ([ -z "$SENTRY_AUTH_TOKEN" ] || pnpm sentry:sourcemaps)
+    # NFR-M5: migrations run before the new version takes traffic; a failure stops the deploy.
+    preDeployCommand: pnpm migrate:dist up
+    startCommand: pnpm start
+    # NFR-A2: instances only take traffic once the database answers.
+    healthCheckPath: /readyz
+    envVars:
+      - fromGroup: linkpocket-staging
+
+  - <<: *api
+    name: linkpocket-api
+    plan: standard
+    envVars:
+      - fromGroup: linkpocket-production
+
+  - &cron
+    type: cron
+    name: linkpocket-cleanup-staging
+    runtime: node
+    autoDeploy: false
+    schedule: '0 3 * * *'
+    buildCommand: >-
+      corepack enable && pnpm install --frozen-lockfile --prod=false &&
+      pnpm build
+    startCommand: pnpm job:cleanup-unverified
+    envVars:
+      - fromGroup: linkpocket-staging
+
+  - <<: *cron
+    name: linkpocket-cleanup
+    envVars:
+      - fromGroup: linkpocket-production

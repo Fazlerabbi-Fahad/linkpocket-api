@@ -1,0 +1,56 @@
+# Deploys one commit of the API to one environment on Render (SRS 10.1): the web service
+# (migrations run in its pre-deploy step), then the scheduled job, then a smoke test and,
+# for production, the health watch. Called by deploy.yml.
+# The `production` GitHub environment has required reviewers: that is the manual approval
+# gate (docs/runbooks/deployment.md). Secrets live in the GitHub environments, never in code.
+name: Deploy environment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging or production
+        required: true
+        type: string
+      ref:
+        description: Commit SHA to deploy
+        required: true
+        type: string
+      watch_minutes:
+        description: Minutes of post-deploy health checks (SRS 10.1 step 5); 0 skips them
+        required: false
+        type: number
+        default: 0
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Deploy API (Render, waits until live)
+        run: bash .github/scripts/render-deploy.sh "${{ vars.RENDER_API_SERVICE_ID }}" "${{ inputs.ref }}"
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+
+      - name: Point the scheduled job at the same commit
+        run: bash .github/scripts/render-deploy.sh "${{ vars.RENDER_CRON_SERVICE_ID }}" "${{ inputs.ref }}"
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+
+      - name: Smoke test
+        run: bash .github/scripts/smoke.sh "${{ vars.API_URL }}"
+
+      - name: Post-deploy health watch
+        if: inputs.watch_minutes > 0
+        run: bash .github/scripts/watch.sh "${{ vars.API_URL }}" "${{ inputs.watch_minutes }}"
